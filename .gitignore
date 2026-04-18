@@ -1,0 +1,74 @@
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak
+venv.bak
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE files
+.idea/
+.vscode/
+
+# Node.js
+node_modules/
+package-lock.json
+package.json
+
+# Build artifacts
+build/
+dist/
+dist_simple/
+dist_obfuscated
+*.egg-info/
+
+# PyInstaller
+*.spec.bak
+*_protected.spec
+
+# PyArmor (代码混淆工具)
+dist_obfuscated/
+.pyarmor/
+pyarmor_runtime*/
+__pyarmor__/
+
+# 加密密钥（重要：不要提交！）
+.pyinstaller_key
+.pyinstaller_key_simple
+*.key
+
+.record
+.history
+config/
+pydew/
+pydew-valley/
+logs/
+*.log
+.DS_Store
+docs/stardew_valley/
+pydew-cat-valley/
+assets/refer_imgs
+temp.json
+output/
+input/
+useful/
+.agent
+error_log.txt
+crash_log.txt
+.pylintrc
+*.sqlite
+.cursor
+.devcontainer
+.workspace
+.meow_os
+output
+tmp
+.env
+.codex
