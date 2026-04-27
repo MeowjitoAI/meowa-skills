@@ -5,7 +5,7 @@
 - `skills/meowart_api.py`
 
 这个文档只保留最常用的调用方式，作为快速入口。
-更完整的参数、子命令和内部实现，请直接阅读脚本源码。
+需要确认完整 CLI 参数时，可以查看脚本的 `--help`。
 
 可用能力概览：
 
@@ -99,7 +99,7 @@ python3 skills/meowart_api.py \
 - `--output-dir ./outputs/pixel_gen`
 - `--reference-file ./reference.png`
 
-`--dry-run` 只打印计划提交的 request 和预计输出目录，不提交任务、不消耗额度，也不需要 API key。它主要用于策划阶段或调试参数，确认模板、尺寸、输出路径是否符合预期。
+`--dry-run` 只打印计划提交的 request 和预计输出目录，不提交任务、不消耗额度，也不需要 API key。它适合在正式生成前确认模板、尺寸、输出路径是否符合预期。
 
 如果需要让服务端根据用户参考图解析需求或保持色彩/造型倾向，可以传 `--reference-file`。该参数会作为 `/api/pixel-gen` 的 `reference_file` multipart 字段上传。
 
@@ -176,9 +176,11 @@ python3 skills/meowart_api.py \
 
 可以先用 `pixel-gen-template-info` 查看模板返回的 `directions` 和 `default_direction`，再决定传什么值。
 
-如果你需要模板查询、历史记录、取消任务、单独下载输出等低层能力，再去读：
+如果需要查看完整命令列表，可以运行：
 
-- `skills/meowart_api.py`
+```bash
+python3 skills/meowart_api.py --help
+```
 
 ## 6. Remove Background
 
@@ -229,7 +231,7 @@ python3 skills/meowart_api.py \
   --mode full
 ```
 
-`self-loop-run` 现在不再支持 `--requirement`，常用场景里主要保留输入图片、循环模式和循环方向这几个核心参数。
+常用参数是 `--image-file`、`--direction` 和 `--mode`。横向卷轴背景通常使用 `--direction horizontal`，纵向场景使用 `--direction vertical`，四向平铺素材使用 `--mode full`。
 
 ## 9. Animate
 
@@ -248,12 +250,7 @@ python3 skills/meowart_api.py \
 - `gif`：兼容性更直观，适合简单预览或分享
 - `spritesheet`：输出序列帧拼图，适合接入游戏或自行控制播放
 
-动画轮询有一个需要注意的兼容性点：
-
-- `skills/meowart_api.py animate-run` 和 `animate-poll` 现在统一通过 `GET /api/jobs?id=<api_job_id>` 轮询动画状态。
-- 如果服务端返回的是单条 job，脚本会直接使用；如果返回的是 `items` 列表，脚本会自动按 `job_id` 过滤出目标任务。
-- 如果任务已经成功，脚本会像其他 `*-run` 命令一样把返回结果里的可下载产物拉到本地输出目录。
-- 如果服务端暂时只返回 `queued`，`animate-run` 会继续自动轮询直到成功、失败、取消或超时。
+`animate-run` 会自动提交、轮询并下载生成结果。如果已经有任务 id，也可以用 `animate-poll --api-job-id <id>` 继续等待和下载。
 
 ## 10. 输出目录
 
