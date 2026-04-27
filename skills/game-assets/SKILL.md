@@ -93,7 +93,7 @@ description: Create, edit, and pipeline game art assets with MeowArt for sprites
     --output-dir ./outputs/background_2k_16x9
   ```
   生成后必须检查实际尺寸；`16:9 2K` 期望是 `2752 x 1536`。
-- 无限循环背景图：先生成一张普通背景图(最好在 prompt 中提前说明这是横向游戏还是纵向游戏的背景,否则图片的横纵比或者内容太差，可能无法改造为自我循环)。然后再调用 `self-loop-run`，把它转成横向或纵向可无缝循环的背景，用于卷轴场景或重复平铺纹理。
+- 无限循环背景图：先生成一张普通背景图(最好在 prompt 中提前说明这是横向游戏还是纵向游戏的背景,否则图片的横纵比或者内容太差，可能无法改造为自我循环)。然后再调用 `self-loop-run`，把它转成横向或纵向可无缝循环的背景，用于卷轴场景或重复平铺纹理。需要四向连续时传 `--mode full`。
 
 ### 角色生成
 - 人物、怪物、道具、Icon 这类资源，通常先通过 `pixel-gen-template-info` 查看可用模板。选择模板生成之前如果条件允许，可选择几个备选项，将 `preview_image_url` 的图片下载下来，并在对话窗口里直接展示给用户，进行一次风格的对齐。

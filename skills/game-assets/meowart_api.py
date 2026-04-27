@@ -552,6 +552,7 @@ def submit_pixel_gen(
     aspect_ratio: str = "1:1",
     temperature: float = 0.0,
     include_base64: bool = False,
+    reference_file: str = "",
     timeout: int = DEFAULT_TIMEOUT,
     verify: bool = True,
 ) -> dict[str, Any]:
@@ -569,12 +570,19 @@ def submit_pixel_gen(
         data["job_name"] = job_name
     if model_name:
         data["model_name"] = model_name
+    files = None
+    if str(reference_file or "").strip():
+        path = Path(reference_file).expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"reference file not found: {path}")
+        files = {"reference_file": (path.name, path.read_bytes(), _mime_for_path(path))}
 
     response, payload = _request_json(
         method="POST",
         url=submit_url,
         headers=_base_headers(api_key),
         data=data,
+        files=files,
         timeout=timeout,
         verify=verify,
     )
@@ -649,6 +657,7 @@ def run_pixel_gen(
     aspect_ratio: str = "1:1",
     temperature: float = 0.0,
     include_base64: bool = False,
+    reference_file: str = "",
     timeout: int = DEFAULT_TIMEOUT,
     max_wait: int = DEFAULT_MAX_WAIT,
     poll_interval: float = DEFAULT_POLL_INTERVAL,
@@ -666,6 +675,7 @@ def run_pixel_gen(
         aspect_ratio=aspect_ratio,
         temperature=temperature,
         include_base64=include_base64,
+        reference_file=reference_file,
         timeout=timeout,
         verify=verify,
     )
@@ -820,7 +830,7 @@ def submit_remove_background(
     api_key: str,
     image_file: str,
     method: str = "hd",
-    enable_perfect_pixel: bool = True,
+    enable_perfect_pixel: bool = False,
     is_white_bg: bool = True,
     prompt: str = "",
     ai_api_key: str = "",
@@ -871,7 +881,7 @@ def run_remove_background(
     api_key: str,
     image_file: str,
     method: str = "hd",
-    enable_perfect_pixel: bool = True,
+    enable_perfect_pixel: bool = False,
     is_white_bg: bool = True,
     prompt: str = "",
     ai_api_key: str = "",
@@ -1031,16 +1041,10 @@ def submit_pixel_gen_self_loop(
     api_base: str,
     api_key: str,
     image_file: str,
-    requirement: str = "",
     job_name: str = "",
-    model_name: str = "gemini-3.1-flash-image-preview",
     resolution: str = "1K",
-    temperature: float = 0.0,
+    mode: str = "basic",
     direction: str = "horizontal",
-    region_percent: float = 20.0,
-    restore_shifted: bool = True,
-    prepare_only: bool = False,
-    include_base64: bool = False,
     timeout: int = DEFAULT_TIMEOUT,
     verify: bool = True,
 ) -> dict[str, Any]:
@@ -1048,16 +1052,10 @@ def submit_pixel_gen_self_loop(
     if not path.is_file():
         raise FileNotFoundError(f"image file not found: {path}")
     data = {
-        "requirement": requirement,
         "job_name": job_name,
-        "model_name": model_name,
         "resolution": resolution,
-        "temperature": str(temperature),
+        "mode": mode,
         "direction": direction,
-        "region_percent": str(region_percent),
-        "restore_shifted": "true" if restore_shifted else "false",
-        "prepare_only": "true" if prepare_only else "false",
-        "include_base64": "true" if include_base64 else "false",
     }
     files = {"file": (path.name, path.read_bytes(), _mime_for_path(path))}
     url = _normalize_base_url(api_base, "/api/workflows/pixel_gen_self_loop/run")
@@ -1081,14 +1079,9 @@ def run_pixel_gen_self_loop(
     api_key: str,
     image_file: str,
     job_name: str = "",
-    model_name: str = "gemini-3.1-flash-image-preview",
     resolution: str = "1K",
-    temperature: float = 0.0,
+    mode: str = "basic",
     direction: str = "horizontal",
-    region_percent: float = 20.0,
-    restore_shifted: bool = True,
-    prepare_only: bool = False,
-    include_base64: bool = False,
     timeout: int = DEFAULT_TIMEOUT,
     max_wait: int = DEFAULT_MAX_WAIT,
     poll_interval: float = DEFAULT_POLL_INTERVAL,
@@ -1099,14 +1092,9 @@ def run_pixel_gen_self_loop(
         api_key=api_key,
         image_file=image_file,
         job_name=job_name,
-        model_name=model_name,
         resolution=resolution,
-        temperature=temperature,
+        mode=mode,
         direction=direction,
-        region_percent=region_percent,
-        restore_shifted=restore_shifted,
-        prepare_only=prepare_only,
-        include_base64=include_base64,
         timeout=timeout,
         verify=verify,
     )
@@ -1253,30 +1241,56 @@ def parse_args() -> argparse.Namespace:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    def option_exists(command_parser: argparse.ArgumentParser, *option_strings: str) -> bool:
+        known_options = {
+            option
+            for action in command_parser._actions
+            for option in getattr(action, "option_strings", ())
+        }
+        return any(option in known_options for option in option_strings)
+
+    def add_if_missing(command_parser: argparse.ArgumentParser, *option_strings: str, **kwargs: Any) -> None:
+        if not option_exists(command_parser, *option_strings):
+            command_parser.add_argument(*option_strings, **kwargs)
+
     def add_shared_path_args(command_parser: argparse.ArgumentParser) -> None:
-        # Mirror common path flags on subcommands so users can place them either
-        # before or after the command name, which matches typical CLI habits.
-        command_parser.add_argument(
+        # Mirror common global flags on subcommands so users can place them
+        # either before or after the command name.
+        add_if_missing(command_parser, "--api-base", default=argparse.SUPPRESS, help="API base URL")
+        add_if_missing(
+            command_parser,
+            "--api-key",
+            default=argparse.SUPPRESS,
+            help=f"User API key, e.g. ma_live_xxx. Defaults to ${DEFAULT_API_KEY_ENV} or .env when omitted.",
+        )
+        add_if_missing(command_parser, "--timeout", type=int, default=argparse.SUPPRESS, help="Per-request timeout in seconds")
+        add_if_missing(command_parser, "--max-wait", type=int, default=argparse.SUPPRESS, help="Max polling wait in seconds")
+        add_if_missing(command_parser, "--poll-interval", type=float, default=argparse.SUPPRESS, help="Polling interval in seconds")
+        add_if_missing(
+            command_parser,
             "--work-dir",
             "--work_dir",
             dest="work_dir",
             default=argparse.SUPPRESS,
             help="Base directory for per-run logs and metadata",
         )
-        command_parser.add_argument(
+        add_if_missing(
+            command_parser,
             "--output-dir",
             "--output_dir",
             dest="output_dir",
             default=argparse.SUPPRESS,
             help="Directory to save generated files; defaults to this run directory",
         )
+        add_if_missing(command_parser, "--no-download", action="store_true", default=argparse.SUPPRESS, help="Skip downloading remote files")
+        add_if_missing(command_parser, "--insecure", action="store_true", default=argparse.SUPPRESS, help="Disable TLS verification")
 
     def add_shared_runtime_args(command_parser: argparse.ArgumentParser) -> None:
-        command_parser.add_argument("--timeout", type=int, default=argparse.SUPPRESS, help="Per-request timeout in seconds")
-        command_parser.add_argument("--max-wait", type=int, default=argparse.SUPPRESS, help="Max polling wait in seconds")
-        command_parser.add_argument("--poll-interval", type=float, default=argparse.SUPPRESS, help="Polling interval in seconds")
-        command_parser.add_argument("--no-download", action="store_true", default=argparse.SUPPRESS, help="Skip downloading remote files")
-        command_parser.add_argument("--insecure", action="store_true", default=argparse.SUPPRESS, help="Disable TLS verification")
+        add_if_missing(command_parser, "--timeout", type=int, default=argparse.SUPPRESS, help="Per-request timeout in seconds")
+        add_if_missing(command_parser, "--max-wait", type=int, default=argparse.SUPPRESS, help="Max polling wait in seconds")
+        add_if_missing(command_parser, "--poll-interval", type=float, default=argparse.SUPPRESS, help="Polling interval in seconds")
+        add_if_missing(command_parser, "--no-download", action="store_true", default=argparse.SUPPRESS, help="Skip downloading remote files")
+        add_if_missing(command_parser, "--insecure", action="store_true", default=argparse.SUPPRESS, help="Disable TLS verification")
 
     pixel_templates = subparsers.add_parser("pixel-gen-template-info", help="Get pixel-gen template info")
     add_shared_path_args(pixel_templates)
@@ -1287,11 +1301,9 @@ def parse_args() -> argparse.Namespace:
     pixel_submit.add_argument("--requirement", required=True)
     pixel_submit.add_argument("--template-config", default="{}", help="JSON object string")
     pixel_submit.add_argument("--job-name", default="")
-    pixel_submit.add_argument("--model-name", default="")
     pixel_submit.add_argument("--resolution", default="1K")
     pixel_submit.add_argument("--aspect-ratio", default="1:1")
-    pixel_submit.add_argument("--temperature", type=float, default=0.0)
-    pixel_submit.add_argument("--include-base64", action="store_true")
+    pixel_submit.add_argument("--reference-file", default="", help="Optional user reference image sent as reference_file")
 
     pixel_run = subparsers.add_parser("pixel-gen-run", help="Submit and wait for pixel-gen")
     for action in pixel_submit._actions[1:]:
@@ -1323,18 +1335,9 @@ def parse_args() -> argparse.Namespace:
     add_shared_path_args(remove_bg_submit)
     remove_bg_submit.add_argument("--image-file", required=True)
     remove_bg_submit.add_argument("--method", default="hd")
-    remove_bg_submit.add_argument("--enable-perfect-pixel", action="store_true", default=True)
-    remove_bg_submit.add_argument("--no-enable-perfect-pixel", action="store_false", dest="enable_perfect_pixel")
     remove_bg_submit.add_argument("--is-white-bg", action="store_true", default=True)
     remove_bg_submit.add_argument("--no-is-white-bg", action="store_false", dest="is_white_bg")
     remove_bg_submit.add_argument("--prompt", default="")
-    remove_bg_submit.add_argument("--ai-api-key", default="")
-    remove_bg_submit.add_argument("--ai-model-name", default="gemini-3.1-flash-image-preview")
-    remove_bg_submit.add_argument("--ai-resolution", default="1K")
-    remove_bg_submit.add_argument("--ai-aspect-ratio", default="1:1")
-    remove_bg_submit.add_argument("--ai-temperature", type=float, default=0.0)
-    remove_bg_submit.add_argument("--ai-background-diff-threshold", type=int, default=120)
-    remove_bg_submit.add_argument("--photoroom-api-key", default="")
 
     remove_bg_run = subparsers.add_parser("remove-background-run", help="Submit and wait for remove-background")
     for action in remove_bg_submit._actions[1:]:
@@ -1346,19 +1349,6 @@ def parse_args() -> argparse.Namespace:
     add_shared_path_args(pixelate_submit)
     pixelate_submit.add_argument("--image-file", required=True)
     pixelate_submit.add_argument("--pixel-size", default="")
-    pixelate_submit.add_argument("--alpha-threshold", type=int, default=128)
-    pixelate_submit.add_argument("--sample-method", default="majority")
-    pixelate_submit.add_argument("--min-size", type=float, default=2.0)
-    pixelate_submit.add_argument("--peak-width", type=int, default=6)
-    pixelate_submit.add_argument("--refine-intensity", type=float, default=0.25)
-    pixelate_submit.add_argument("--fix-square", action="store_true", default=True)
-    pixelate_submit.add_argument("--no-fix-square", action="store_false", dest="fix_square")
-    pixelate_submit.add_argument("--pad-pow2-square", action="store_true", default=True)
-    pixelate_submit.add_argument("--no-pad-pow2-square", action="store_false", dest="pad_pow2_square")
-    pixelate_submit.add_argument("--crop-border", action="store_true", default=False)
-    pixelate_submit.add_argument("--crop-color-thr", type=int, default=20)
-    pixelate_submit.add_argument("--crop-bg-ratio", type=float, default=0.995)
-    pixelate_submit.add_argument("--crop-edge-width", type=int, default=10)
 
     pixelate_run = subparsers.add_parser("pixelate-run", help="Submit and wait for pixelate")
     for action in pixelate_submit._actions[1:]:
@@ -1369,17 +1359,10 @@ def parse_args() -> argparse.Namespace:
     self_loop_submit = subparsers.add_parser("self-loop-submit", help="Submit a pixel_gen_self_loop job")
     add_shared_path_args(self_loop_submit)
     self_loop_submit.add_argument("--image-file", required=True)
-    self_loop_submit.add_argument("--requirement", default="")
     self_loop_submit.add_argument("--job-name", default="")
-    self_loop_submit.add_argument("--model-name", default="gemini-3.1-flash-image-preview")
     self_loop_submit.add_argument("--resolution", default="1K")
-    self_loop_submit.add_argument("--temperature", type=float, default=0.0)
+    self_loop_submit.add_argument("--mode", choices=["basic", "full"], default="basic")
     self_loop_submit.add_argument("--direction", default="horizontal")
-    self_loop_submit.add_argument("--region-percent", type=float, default=20.0)
-    self_loop_submit.add_argument("--restore-shifted", action="store_true", default=True)
-    self_loop_submit.add_argument("--no-restore-shifted", action="store_false", dest="restore_shifted")
-    self_loop_submit.add_argument("--prepare-only", action="store_true", default=False)
-    self_loop_submit.add_argument("--include-base64", action="store_true")
 
     self_loop_run = subparsers.add_parser("self-loop-run", help="Submit and wait for pixel_gen_self_loop")
     for action in self_loop_submit._actions[1:]:
@@ -1410,15 +1393,8 @@ def parse_args() -> argparse.Namespace:
     animate_submit_parser.add_argument("--image-file", required=True)
     animate_submit_parser.add_argument("--prompt", default="")
     animate_submit_parser.add_argument("--is-pixel", action="store_true")
-    animate_submit_parser.add_argument("--optimize-prompt", action="store_true", default=True)
-    animate_submit_parser.add_argument("--no-optimize-prompt", action="store_false", dest="optimize_prompt")
-    animate_submit_parser.add_argument("--model", default="")
-    animate_submit_parser.add_argument("--negative-prompt", default="")
-    animate_submit_parser.add_argument("--pixel-config", default="", help="JSON object string")
     animate_submit_parser.add_argument("--output-frames", type=int, default=8)
-    animate_submit_parser.add_argument("--seed", type=int, default=None)
     animate_submit_parser.add_argument("--output-format", default="webp")
-    animate_submit_parser.add_argument("--matte-color", default="#808080")
 
     animate_run_parser = subparsers.add_parser("animate-run", help="Submit and wait for animate")
     for action in animate_submit_parser._actions[1:]:
@@ -1523,11 +1499,9 @@ def main() -> int:
                 requirement=args.requirement,
                 template_config=_parse_json_arg(args.template_config, name="template_config"),
                 job_name=args.job_name,
-                model_name=args.model_name,
                 resolution=args.resolution,
                 aspect_ratio=args.aspect_ratio,
-                temperature=args.temperature,
-                include_base64=args.include_base64,
+                reference_file=args.reference_file,
                 timeout=args.timeout,
                 verify=verify,
             )
@@ -1541,11 +1515,9 @@ def main() -> int:
                     "requirement": args.requirement,
                     "template_config": _parse_json_arg(args.template_config, name="template_config"),
                     "job_name": args.job_name,
-                    "model_name": args.model_name,
                     "resolution": args.resolution,
                     "aspect_ratio": args.aspect_ratio,
-                    "temperature": args.temperature,
-                    "include_base64": args.include_base64,
+                    "reference_file": args.reference_file,
                 },
                 response_payload=payload,
                 downloads=[],
@@ -1561,11 +1533,9 @@ def main() -> int:
                 "requirement": args.requirement,
                 "template_config": template_config,
                 "job_name": args.job_name,
-                "model_name": args.model_name,
                 "resolution": args.resolution,
                 "aspect_ratio": args.aspect_ratio,
-                "temperature": args.temperature,
-                "include_base64": args.include_base64,
+                "reference_file": args.reference_file,
             }
             predicted_output_dir = _predict_saved_dir(effective_output_dir, args.job_name or args.requirement)
             print(f"[INFO] planned_output_dir={predicted_output_dir}")
@@ -1595,11 +1565,9 @@ def main() -> int:
                 requirement=args.requirement,
                 template_config=template_config,
                 job_name=args.job_name,
-                model_name=args.model_name,
                 resolution=args.resolution,
                 aspect_ratio=args.aspect_ratio,
-                temperature=args.temperature,
-                include_base64=args.include_base64,
+                reference_file=args.reference_file,
                 timeout=args.timeout,
                 verify=verify,
             )
@@ -1736,16 +1704,8 @@ def main() -> int:
                 api_key=args.api_key,
                 image_file=args.image_file,
                 method=args.method,
-                enable_perfect_pixel=args.enable_perfect_pixel,
                 is_white_bg=args.is_white_bg,
                 prompt=args.prompt,
-                ai_api_key=args.ai_api_key,
-                ai_model_name=args.ai_model_name,
-                ai_resolution=args.ai_resolution,
-                ai_aspect_ratio=args.ai_aspect_ratio,
-                ai_temperature=args.ai_temperature,
-                ai_background_diff_threshold=args.ai_background_diff_threshold,
-                photoroom_api_key=args.photoroom_api_key,
                 timeout=args.timeout,
                 verify=verify,
             )
@@ -1757,10 +1717,8 @@ def main() -> int:
                 request_payload={
                     "image_file": args.image_file,
                     "method": args.method,
-                    "enable_perfect_pixel": args.enable_perfect_pixel,
                     "is_white_bg": args.is_white_bg,
                     "prompt": args.prompt,
-                    "ai_model_name": args.ai_model_name,
                 },
                 response_payload=payload,
                 downloads=[],
@@ -1776,16 +1734,8 @@ def main() -> int:
                 api_key=args.api_key,
                 image_file=args.image_file,
                 method=args.method,
-                enable_perfect_pixel=args.enable_perfect_pixel,
                 is_white_bg=args.is_white_bg,
                 prompt=args.prompt,
-                ai_api_key=args.ai_api_key,
-                ai_model_name=args.ai_model_name,
-                ai_resolution=args.ai_resolution,
-                ai_aspect_ratio=args.ai_aspect_ratio,
-                ai_temperature=args.ai_temperature,
-                ai_background_diff_threshold=args.ai_background_diff_threshold,
-                photoroom_api_key=args.photoroom_api_key,
                 timeout=args.timeout,
                 max_wait=args.max_wait,
                 poll_interval=args.poll_interval,
@@ -1808,10 +1758,8 @@ def main() -> int:
                 request_payload={
                     "image_file": args.image_file,
                     "method": args.method,
-                    "enable_perfect_pixel": args.enable_perfect_pixel,
                     "is_white_bg": args.is_white_bg,
                     "prompt": args.prompt,
-                    "ai_model_name": args.ai_model_name,
                 },
                 response_payload={"submit": submit_payload, "final": final_payload},
                 downloads=downloads,
@@ -1827,17 +1775,6 @@ def main() -> int:
                 api_key=args.api_key,
                 image_file=args.image_file,
                 pixel_size=args.pixel_size,
-                alpha_threshold=args.alpha_threshold,
-                sample_method=args.sample_method,
-                min_size=args.min_size,
-                peak_width=args.peak_width,
-                refine_intensity=args.refine_intensity,
-                fix_square=args.fix_square,
-                pad_pow2_square=args.pad_pow2_square,
-                crop_border=args.crop_border,
-                crop_color_thr=args.crop_color_thr,
-                crop_bg_ratio=args.crop_bg_ratio,
-                crop_edge_width=args.crop_edge_width,
                 timeout=args.timeout,
                 verify=verify,
             )
@@ -1861,17 +1798,6 @@ def main() -> int:
                 api_key=args.api_key,
                 image_file=args.image_file,
                 pixel_size=args.pixel_size,
-                alpha_threshold=args.alpha_threshold,
-                sample_method=args.sample_method,
-                min_size=args.min_size,
-                peak_width=args.peak_width,
-                refine_intensity=args.refine_intensity,
-                fix_square=args.fix_square,
-                pad_pow2_square=args.pad_pow2_square,
-                crop_border=args.crop_border,
-                crop_color_thr=args.crop_color_thr,
-                crop_bg_ratio=args.crop_bg_ratio,
-                crop_edge_width=args.crop_edge_width,
                 timeout=args.timeout,
                 max_wait=args.max_wait,
                 poll_interval=args.poll_interval,
@@ -1905,16 +1831,10 @@ def main() -> int:
                 api_base=args.api_base,
                 api_key=args.api_key,
                 image_file=args.image_file,
-                requirement=args.requirement,
                 job_name=args.job_name,
-                model_name=args.model_name,
                 resolution=args.resolution,
-                temperature=args.temperature,
+                mode=args.mode,
                 direction=args.direction,
-                region_percent=args.region_percent,
-                restore_shifted=args.restore_shifted,
-                prepare_only=args.prepare_only,
-                include_base64=args.include_base64,
                 timeout=args.timeout,
                 verify=verify,
             )
@@ -1923,7 +1843,11 @@ def main() -> int:
                 started_at=started_at,
                 finished_at=datetime.now().isoformat(timespec="seconds"),
                 args=args,
-                request_payload={"image_file": args.image_file, "requirement": args.requirement, "direction": args.direction},
+                request_payload={
+                    "image_file": args.image_file,
+                    "mode": args.mode,
+                    "direction": args.direction,
+                },
                 response_payload=payload,
                 downloads=[],
                 effective_output_dir=str(effective_output_dir),
@@ -1938,14 +1862,9 @@ def main() -> int:
                 api_key=args.api_key,
                 image_file=args.image_file,
                 job_name=args.job_name,
-                model_name=args.model_name,
                 resolution=args.resolution,
-                temperature=args.temperature,
+                mode=args.mode,
                 direction=args.direction,
-                region_percent=args.region_percent,
-                restore_shifted=args.restore_shifted,
-                prepare_only=args.prepare_only,
-                include_base64=args.include_base64,
                 timeout=args.timeout,
                 max_wait=args.max_wait,
                 poll_interval=args.poll_interval,
@@ -1965,7 +1884,11 @@ def main() -> int:
                 started_at=started_at,
                 finished_at=datetime.now().isoformat(timespec="seconds"),
                 args=args,
-                request_payload={"image_file": args.image_file, "direction": args.direction},
+                request_payload={
+                    "image_file": args.image_file,
+                    "mode": args.mode,
+                    "direction": args.direction,
+                },
                 response_payload={"submit": submit_payload, "final": final_payload},
                 downloads=downloads,
                 effective_output_dir=str(output_dir),
@@ -2070,14 +1993,8 @@ def main() -> int:
                 image_data_url=image_file_to_data_url(args.image_file),
                 prompt=args.prompt,
                 is_pixel=args.is_pixel,
-                optimize_prompt=args.optimize_prompt,
-                model=args.model,
-                negative_prompt=args.negative_prompt,
-                pixel_config=_parse_json_arg(args.pixel_config or "{}", name="pixel_config"),
                 output_frames=args.output_frames,
-                seed=args.seed,
                 output_format=args.output_format,
-                matte_color=args.matte_color,
                 timeout=args.timeout,
                 verify=verify,
             )
@@ -2086,7 +2003,7 @@ def main() -> int:
                 started_at=started_at,
                 finished_at=datetime.now().isoformat(timespec="seconds"),
                 args=args,
-                request_payload={"image_file": args.image_file, "prompt": args.prompt, "model": args.model},
+                request_payload={"image_file": args.image_file, "prompt": args.prompt, "is_pixel": args.is_pixel},
                 response_payload=payload,
                 downloads=[],
                 effective_output_dir=str(effective_output_dir),
@@ -2102,14 +2019,8 @@ def main() -> int:
                 image_data_url=image_file_to_data_url(args.image_file),
                 prompt=args.prompt,
                 is_pixel=args.is_pixel,
-                optimize_prompt=args.optimize_prompt,
-                model=args.model,
-                negative_prompt=args.negative_prompt,
-                pixel_config=_parse_json_arg(args.pixel_config or "{}", name="pixel_config"),
                 output_frames=args.output_frames,
-                seed=args.seed,
                 output_format=args.output_format,
-                matte_color=args.matte_color,
                 timeout=args.timeout,
                 verify=verify,
             )
@@ -2136,7 +2047,7 @@ def main() -> int:
                     started_at=started_at,
                     finished_at=datetime.now().isoformat(timespec="seconds"),
                     args=args,
-                    request_payload={"image_file": args.image_file, "prompt": args.prompt, "model": args.model},
+                    request_payload={"image_file": args.image_file, "prompt": args.prompt, "is_pixel": args.is_pixel},
                     response_payload={"submit": submit_payload},
                     downloads=downloads,
                     effective_output_dir=str(output_dir),
@@ -2160,7 +2071,7 @@ def main() -> int:
                 started_at=started_at,
                 finished_at=datetime.now().isoformat(timespec="seconds"),
                 args=args,
-                request_payload={"image_file": args.image_file, "prompt": args.prompt, "model": args.model},
+                request_payload={"image_file": args.image_file, "prompt": args.prompt, "is_pixel": args.is_pixel},
                 response_payload={"submit": submit_payload, "final": final_payload},
                 downloads=downloads,
                 effective_output_dir=str(output_dir),

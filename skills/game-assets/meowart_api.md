@@ -97,14 +97,17 @@ python3 skills/meowart_api.py \
 - `--template-config '{}'`
 - `--dry-run`
 - `--output-dir ./outputs/pixel_gen`
+- `--reference-file ./reference.png`
 
 `--dry-run` 只打印计划提交的 request 和预计输出目录，不提交任务、不消耗额度，也不需要 API key。它主要用于策划阶段或调试参数，确认模板、尺寸、输出路径是否符合预期。
 
-现在脚本也兼容把 `--output-dir` / `--work-dir` 写在子命令后面，下面两种写法都可以：
+如果需要让服务端根据用户参考图解析需求或保持色彩/造型倾向，可以传 `--reference-file`。该参数会作为 `/api/pixel-gen` 的 `reference_file` multipart 字段上传。
+
+现在脚本也兼容把通用参数写在子命令后面，例如 `--api-base`、`--api-key`、`--timeout`、`--max-wait`、`--poll-interval`、`--output-dir`、`--work-dir`、`--no-download`、`--insecure`。下面两种写法都可以：
 
 ```bash
-python3 skills/meowart_api.py --output-dir ./outputs pixel-gen-run ...
-python3 skills/meowart_api.py pixel-gen-run --output-dir ./outputs ...
+python3 skills/meowart_api.py --timeout 120 --output-dir ./outputs pixel-gen-run ...
+python3 skills/meowart_api.py pixel-gen-run --timeout 120 --output-dir ./outputs ...
 ```
 
 `*-run` 命令在提交成功后，也会立刻打印：
@@ -217,7 +220,16 @@ python3 skills/meowart_api.py \
   --direction horizontal
 ```
 
-`self-loop-run` 现在不再支持 `--requirement`，常用场景里只保留输入图片和循环方向这几个核心参数。
+`self-loop-run` 默认使用 `basic` 模式，适合单方向横向或纵向补缝。如果需要四向连续的完整循环图，使用 `full` 模式：
+
+```bash
+python3 skills/meowart_api.py \
+  self-loop-run \
+  --image-file ./tile.png \
+  --mode full
+```
+
+`self-loop-run` 现在不再支持 `--requirement`，常用场景里主要保留输入图片、循环模式和循环方向这几个核心参数。
 
 ## 9. Animate
 
