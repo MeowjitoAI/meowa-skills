@@ -70,5 +70,7 @@ crash_log.txt
 .meow_os
 output
 tmp
+.meowart-test/
+skills/game-assets/.meow_art/
 .env
 .codex

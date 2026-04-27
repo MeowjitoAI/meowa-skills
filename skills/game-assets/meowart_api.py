@@ -1297,6 +1297,7 @@ def parse_args() -> argparse.Namespace:
     for action in pixel_submit._actions[1:]:
         if action.dest not in {"help"}:
             pixel_run._add_action(action)
+    pixel_run.add_argument("--dry-run", action="store_true", help="Print planned request/output paths without submitting a job")
     add_shared_runtime_args(pixel_run)
 
     pixel_poll = subparsers.add_parser("pixel-gen-poll", help="Poll one pixel-gen job")
@@ -1490,7 +1491,8 @@ def main() -> int:
     run_dir = _create_run_dir(args.work_dir, args.command)
     effective_output_dir = _resolve_output_dir(args.output_dir, run_dir)
     try:
-        args.api_key = _resolve_api_key(args.api_key)
+        needs_api_key = not (args.command == "pixel-gen-run" and getattr(args, "dry_run", False))
+        args.api_key = _resolve_api_key(args.api_key) if needs_api_key else str(args.api_key or "").strip()
         verify = not args.insecure
 
         if args.command == "pixel-gen-template-info":
@@ -1567,6 +1569,25 @@ def main() -> int:
             }
             predicted_output_dir = _predict_saved_dir(effective_output_dir, args.job_name or args.requirement)
             print(f"[INFO] planned_output_dir={predicted_output_dir}")
+            if args.dry_run:
+                dry_payload = {
+                    "dry_run": True,
+                    "submit_endpoint": _normalize_base_url(args.api_base, "/api/pixel-gen"),
+                    "planned_output_dir": str(predicted_output_dir),
+                    "request": request_payload,
+                }
+                _write_meta(
+                    run_dir=run_dir,
+                    started_at=started_at,
+                    finished_at=datetime.now().isoformat(timespec="seconds"),
+                    args=args,
+                    request_payload=request_payload,
+                    response_payload=dry_payload,
+                    downloads=[],
+                    effective_output_dir=str(predicted_output_dir),
+                )
+                print(_format_json_for_display(dry_payload))
+                return 0
             submit_payload = submit_pixel_gen(
                 api_base=args.api_base,
                 api_key=args.api_key,

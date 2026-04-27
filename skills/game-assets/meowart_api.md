@@ -96,8 +96,9 @@ python3 skills/meowart_api.py \
 - `--requirement`
 - `--template-config '{}'`
 - `--dry-run`
-- `--no-wait`
 - `--output-dir ./outputs/pixel_gen`
+
+`--dry-run` 只打印计划提交的 request 和预计输出目录，不提交任务、不消耗额度，也不需要 API key。它主要用于策划阶段或调试参数，确认模板、尺寸、输出路径是否符合预期。
 
 现在脚本也兼容把 `--output-dir` / `--work-dir` 写在子命令后面，下面两种写法都可以：
 
@@ -114,6 +115,13 @@ python3 skills/meowart_api.py pixel-gen-run --output-dir ./outputs ...
 ### requirement 的写法建议
 
 这里最容易犯错的一点是：`--requirement` 不等于“最终发给模型的完整 prompt”。
+
+### 模板选择建议
+
+- 物品、Icon、小动物：推荐优先使用 `food`、`object` 模板，单次通常可以生成 `8` 个 `64x64` 像素对象。
+- 人物、主角、怪物角色：推荐优先使用 `pixel_char` 模板，单次通常可以生成 `2` 个 `128x128` 对象。
+- 具体模板名称、输出尺寸和数量以 `pixel-gen-template-info` 返回为准；如果模板列表变化，优先相信接口返回。
+- 批量生成时，可以在 `--requirement` 里分别描述多个对象的外观，也可以一句话描述整体需求，让服务端按模板数量补充变体。尽量一次性生成模板支持的最大数量，因为价格和质量通常没有区别，多生成一些更方便挑选。
 
 - 模板会先根据自己的默认配置决定一次生成几个对象，例如 `cat_2` 默认是 `8` 个。
 - 服务端会结合模板的 `target_count`，把你的 `requirement` 解析并包装成真正的生成 prompt。并对你的 prompt 进行一定的润色或精简。
