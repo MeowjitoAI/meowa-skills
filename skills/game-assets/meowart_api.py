@@ -83,6 +83,10 @@ def _save_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _format_json_for_display(payload: Any) -> str:
+    return json.dumps(_sanitize_for_meta(payload), ensure_ascii=False, indent=2)
+
+
 def _timestamp_slug() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -91,9 +95,7 @@ def _mask_secret(value: str) -> str:
     raw = str(value or "").strip()
     if not raw:
         return raw
-    if len(raw) <= 8:
-        return "*" * len(raw)
-    return f"{raw[:4]}...{raw[-4:]}"
+    return "***REDACTED***"
 
 
 def _sanitize_for_meta(value: Any, *, key: str = "") -> Any:
@@ -371,6 +373,27 @@ def _download_named_urls(
     return downloads
 
 
+def _looks_like_downloadable_output_url(key: str, url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return False
+
+    path = parsed.path or ""
+    if path.endswith("/"):
+        return False
+
+    host = (parsed.netloc or "").lower()
+    if host == "storage.googleapis.com":
+        if path.startswith("/meowart-bucket-public/"):
+            return True
+        return bool(parsed.query)
+
+    lowered_key = key.lower()
+    if any(token in lowered_key for token in {"base_url", "run_dir", "debug", "manifest", "metadata"}):
+        return False
+    return any(token in lowered_key for token in {"output", "result", "image", "file", "sprite", "url"})
+
+
 def image_file_to_data_url(image_path: str) -> str:
     path = Path(image_path).expanduser().resolve()
     if not path.is_file():
@@ -402,7 +425,7 @@ def gemini_proxy_request(
         verify=verify,
     )
     if response.status_code >= 400:
-        raise RuntimeError(json.dumps(payload, ensure_ascii=False, indent=2))
+        raise RuntimeError(_format_json_for_display(payload))
     return payload
 
 
@@ -452,7 +475,7 @@ def get_credits_balance(
         verify=verify,
     )
     if response.status_code >= 400:
-        raise RuntimeError(json.dumps(payload, ensure_ascii=False, indent=2))
+        raise RuntimeError(_format_json_for_display(payload))
     return payload
 
 
@@ -512,7 +535,7 @@ def pixel_gen_template_info(
         verify=verify,
     )
     if response.status_code >= 400:
-        raise RuntimeError(json.dumps(payload, ensure_ascii=False, indent=2))
+        raise RuntimeError(_format_json_for_display(payload))
     return payload
 
 
@@ -556,7 +579,7 @@ def submit_pixel_gen(
         verify=verify,
     )
     if response.status_code >= 400:
-        raise RuntimeError(json.dumps(payload, ensure_ascii=False, indent=2))
+        raise RuntimeError(_format_json_for_display(payload))
     return payload
 
 
@@ -578,7 +601,7 @@ def poll_pixel_gen_job(
         verify=verify,
     )
     if response.status_code >= 400:
-        raise RuntimeError(json.dumps(payload, ensure_ascii=False, indent=2))
+        raise RuntimeError(_format_json_for_display(payload))
     return payload
 
 
@@ -685,7 +708,7 @@ def pixel_gen_history(
         verify=verify,
     )
     if response.status_code >= 400:
-        raise RuntimeError(json.dumps(payload, ensure_ascii=False, indent=2))
+        raise RuntimeError(_format_json_for_display(payload))
     return payload
 
 
@@ -706,7 +729,7 @@ def pixel_gen_cancel(
         verify=verify,
     )
     if response.status_code >= 400:
-        raise RuntimeError(json.dumps(payload, ensure_ascii=False, indent=2))
+        raise RuntimeError(_format_json_for_display(payload))
     return payload
 
 
@@ -838,7 +861,7 @@ def submit_remove_background(
         verify=verify,
     )
     if response.status_code >= 400:
-        raise RuntimeError(json.dumps(payload, ensure_ascii=False, indent=2))
+        raise RuntimeError(_format_json_for_display(payload))
     return payload
 
 
@@ -944,7 +967,7 @@ def submit_pixelate(
         verify=verify,
     )
     if response.status_code >= 400:
-        raise RuntimeError(json.dumps(payload, ensure_ascii=False, indent=2))
+        raise RuntimeError(_format_json_for_display(payload))
     return payload
 
 
@@ -1048,7 +1071,7 @@ def submit_pixel_gen_self_loop(
         verify=verify,
     )
     if response.status_code >= 400:
-        raise RuntimeError(json.dumps(payload, ensure_ascii=False, indent=2))
+        raise RuntimeError(_format_json_for_display(payload))
     return payload
 
 
@@ -1119,7 +1142,7 @@ def poll_animate_job(
         verify=verify,
     )
     if response.status_code >= 400:
-        raise RuntimeError(json.dumps(payload, ensure_ascii=False, indent=2))
+        raise RuntimeError(_format_json_for_display(payload))
     returned_job_id = str(payload.get("job_id") or payload.get("api_job_id") or "").strip()
     if returned_job_id == api_job_id:
         return payload
@@ -1145,13 +1168,18 @@ def wait_animate_job(
     deadline = time.time() + max(max_wait, 1)
     final_payload: dict[str, Any] | None = None
     while time.time() <= deadline:
-        payload = poll_animate_job(
-            api_base=api_base,
-            api_key=api_key,
-            api_job_id=api_job_id,
-            timeout=timeout,
-            verify=verify,
-        )
+        try:
+            payload = poll_animate_job(
+                api_base=api_base,
+                api_key=api_key,
+                api_job_id=api_job_id,
+                timeout=timeout,
+                verify=verify,
+            )
+        except (requests.RequestException, RuntimeError, ValueError) as exc:
+            print(f"[WARN] animate poll request failed: {exc}", file=sys.stderr)
+            time.sleep(max(poll_interval, 0.1))
+            continue
         _print_status("[INFO]", payload)
         status = str(payload.get("status") or "").strip().lower()
         if status in TERMINAL_ANIMATE_STATUSES:
@@ -1175,13 +1203,13 @@ def _save_run_outputs(
     no_download: bool = False,
 ) -> tuple[Path, list[dict[str, Any]]]:
     output_dir = _predict_saved_dir(output_root, slug_seed)
-    _save_json(output_dir / "submit_response.json", submit_payload)
-    _save_json(output_dir / "job_response.json", final_payload)
+    _save_json(output_dir / "submit_response.json", _sanitize_for_meta(submit_payload))
+    _save_json(output_dir / "job_response.json", _sanitize_for_meta(final_payload))
     downloads: list[dict[str, Any]] = [
         {"type": "json", "path": str(output_dir / "submit_response.json")},
         {"type": "json", "path": str(output_dir / "job_response.json")},
     ]
-    urls = _collect_http_urls(final_payload)
+    urls = [(key, url) for key, url in _collect_http_urls(final_payload) if _looks_like_downloadable_output_url(key, url)]
     if not no_download and urls:
         print(f"[INFO] downloading_outputs count={len(urls)} to={output_dir}")
         headers = _base_headers(api_key) if api_key else None
@@ -1232,23 +1260,23 @@ def parse_args() -> argparse.Namespace:
             "--work-dir",
             "--work_dir",
             dest="work_dir",
-            default=DEFAULT_WORK_DIR,
+            default=argparse.SUPPRESS,
             help="Base directory for per-run logs and metadata",
         )
         command_parser.add_argument(
             "--output-dir",
             "--output_dir",
             dest="output_dir",
-            default="",
+            default=argparse.SUPPRESS,
             help="Directory to save generated files; defaults to this run directory",
         )
 
     def add_shared_runtime_args(command_parser: argparse.ArgumentParser) -> None:
-        command_parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help="Per-request timeout in seconds")
-        command_parser.add_argument("--max-wait", type=int, default=DEFAULT_MAX_WAIT, help="Max polling wait in seconds")
-        command_parser.add_argument("--poll-interval", type=float, default=DEFAULT_POLL_INTERVAL, help="Polling interval in seconds")
-        command_parser.add_argument("--no-download", action="store_true", help="Skip downloading remote files")
-        command_parser.add_argument("--insecure", action="store_true", help="Disable TLS verification")
+        command_parser.add_argument("--timeout", type=int, default=argparse.SUPPRESS, help="Per-request timeout in seconds")
+        command_parser.add_argument("--max-wait", type=int, default=argparse.SUPPRESS, help="Max polling wait in seconds")
+        command_parser.add_argument("--poll-interval", type=float, default=argparse.SUPPRESS, help="Polling interval in seconds")
+        command_parser.add_argument("--no-download", action="store_true", default=argparse.SUPPRESS, help="Skip downloading remote files")
+        command_parser.add_argument("--insecure", action="store_true", default=argparse.SUPPRESS, help="Disable TLS verification")
 
     pixel_templates = subparsers.add_parser("pixel-gen-template-info", help="Get pixel-gen template info")
     add_shared_path_args(pixel_templates)
@@ -1311,6 +1339,7 @@ def parse_args() -> argparse.Namespace:
     for action in remove_bg_submit._actions[1:]:
         if action.dest not in {"help"}:
             remove_bg_run._add_action(action)
+    add_shared_runtime_args(remove_bg_run)
 
     pixelate_submit = subparsers.add_parser("pixelate-submit", help="Submit a pixelate job")
     add_shared_path_args(pixelate_submit)
@@ -1334,6 +1363,7 @@ def parse_args() -> argparse.Namespace:
     for action in pixelate_submit._actions[1:]:
         if action.dest not in {"help"}:
             pixelate_run._add_action(action)
+    add_shared_runtime_args(pixelate_run)
 
     self_loop_submit = subparsers.add_parser("self-loop-submit", help="Submit a pixel_gen_self_loop job")
     add_shared_path_args(self_loop_submit)
@@ -1354,6 +1384,7 @@ def parse_args() -> argparse.Namespace:
     for action in self_loop_submit._actions[1:]:
         if action.dest not in {"help", "requirement"}:
             self_loop_run._add_action(action)
+    add_shared_runtime_args(self_loop_run)
 
     gemini_post = subparsers.add_parser("gemini-post", help="Call a generic Gemini proxy POST endpoint")
     add_shared_path_args(gemini_post)
@@ -1392,6 +1423,7 @@ def parse_args() -> argparse.Namespace:
     for action in animate_submit_parser._actions[1:]:
         if action.dest not in {"help"}:
             animate_run_parser._add_action(action)
+    add_shared_runtime_args(animate_run_parser)
 
     animate_poll_parser = subparsers.add_parser("animate-poll", help="Poll one animate job")
     add_shared_path_args(animate_poll_parser)
@@ -1478,7 +1510,7 @@ def main() -> int:
                 downloads=[],
                 effective_output_dir=str(effective_output_dir),
             )
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            print(_format_json_for_display(payload))
             return 0
 
         if args.command == "pixel-gen-submit":
@@ -1517,7 +1549,7 @@ def main() -> int:
                 downloads=[],
                 effective_output_dir=str(effective_output_dir),
             )
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            print(_format_json_for_display(payload))
             return 0
 
         if args.command == "pixel-gen-run":
@@ -1553,7 +1585,7 @@ def main() -> int:
             api_job_id = str(submit_payload.get("api_job_id") or "").strip()
             if not api_job_id:
                 raise RuntimeError("pixel-gen submit response missing api_job_id")
-            _save_json(predicted_output_dir / "submit_response.json", submit_payload)
+            _save_json(predicted_output_dir / "submit_response.json", _sanitize_for_meta(submit_payload))
             print(f"[INFO] submitted api_job_id={api_job_id}")
             print(f"[INFO] waiting_for_completion poll_interval={args.poll_interval}s max_wait={args.max_wait}s")
             final_payload = wait_pixel_gen_job(
@@ -1586,7 +1618,7 @@ def main() -> int:
                 effective_output_dir=str(output_dir),
             )
             print(f"[INFO] saved_dir={output_dir}")
-            print(json.dumps(final_payload, ensure_ascii=False, indent=2))
+            print(_format_json_for_display(final_payload))
             return 0
 
         if args.command == "pixel-gen-poll":
@@ -1607,7 +1639,7 @@ def main() -> int:
                 downloads=[],
                 effective_output_dir=str(effective_output_dir),
             )
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            print(_format_json_for_display(payload))
             return 0
 
         if args.command == "pixel-gen-history":
@@ -1630,7 +1662,7 @@ def main() -> int:
                 downloads=[],
                 effective_output_dir=str(effective_output_dir),
             )
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            print(_format_json_for_display(payload))
             return 0
 
         if args.command == "pixel-gen-download":
@@ -1674,7 +1706,7 @@ def main() -> int:
                 downloads=[],
                 effective_output_dir=str(effective_output_dir),
             )
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            print(_format_json_for_display(payload))
             return 0
 
         if args.command == "remove-background-submit":
@@ -1713,7 +1745,7 @@ def main() -> int:
                 downloads=[],
                 effective_output_dir=str(effective_output_dir),
             )
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            print(_format_json_for_display(payload))
             return 0
 
         if args.command == "remove-background-run":
@@ -1765,7 +1797,7 @@ def main() -> int:
                 effective_output_dir=str(output_dir),
             )
             print(f"[INFO] saved_dir={output_dir}")
-            print(json.dumps(final_payload, ensure_ascii=False, indent=2))
+            print(_format_json_for_display(final_payload))
             return 0
 
         if args.command == "pixelate-submit":
@@ -1798,7 +1830,7 @@ def main() -> int:
                 downloads=[],
                 effective_output_dir=str(effective_output_dir),
             )
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            print(_format_json_for_display(payload))
             return 0
 
         if args.command == "pixelate-run":
@@ -1844,7 +1876,7 @@ def main() -> int:
                 effective_output_dir=str(output_dir),
             )
             print(f"[INFO] saved_dir={output_dir}")
-            print(json.dumps(final_payload, ensure_ascii=False, indent=2))
+            print(_format_json_for_display(final_payload))
             return 0
 
         if args.command == "self-loop-submit":
@@ -1875,7 +1907,7 @@ def main() -> int:
                 downloads=[],
                 effective_output_dir=str(effective_output_dir),
             )
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            print(_format_json_for_display(payload))
             return 0
 
         if args.command == "self-loop-run":
@@ -1918,7 +1950,7 @@ def main() -> int:
                 effective_output_dir=str(output_dir),
             )
             print(f"[INFO] saved_dir={output_dir}")
-            print(json.dumps(final_payload, ensure_ascii=False, indent=2))
+            print(_format_json_for_display(final_payload))
             return 0
 
         if args.command == "gemini-post":
@@ -1950,7 +1982,7 @@ def main() -> int:
             )
             if output_dir is not None:
                 print(f"[INFO] saved_dir={output_dir}")
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            print(_format_json_for_display(payload))
             return 0
 
         if args.command == "gemini-generate-content":
@@ -1987,7 +2019,7 @@ def main() -> int:
             )
             if output_dir is not None:
                 print(f"[INFO] saved_dir={output_dir}")
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            print(_format_json_for_display(payload))
             return 0
 
         if args.command == "credits-balance":
@@ -2007,7 +2039,7 @@ def main() -> int:
                 downloads=[],
                 effective_output_dir=str(effective_output_dir),
             )
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            print(_format_json_for_display(payload))
             return 0
 
         if args.command == "animate-submit":
@@ -2038,7 +2070,7 @@ def main() -> int:
                 downloads=[],
                 effective_output_dir=str(effective_output_dir),
             )
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            print(_format_json_for_display(payload))
             return 0
 
         if args.command == "animate-run":
@@ -2076,7 +2108,7 @@ def main() -> int:
                 )
             except (RuntimeError, TimeoutError) as exc:
                 output_dir = Path(str(effective_output_dir)).expanduser() / _safe_slug(args.prompt or Path(args.image_file).stem)
-                _save_json(output_dir / "submit_response.json", submit_payload)
+                _save_json(output_dir / "submit_response.json", _sanitize_for_meta(submit_payload))
                 downloads = [{"type": "json", "path": str(output_dir / "submit_response.json")}]
                 _write_meta(
                     run_dir=run_dir,
@@ -2091,7 +2123,7 @@ def main() -> int:
                 )
                 print(f"[WARN] animate submitted but polling did not complete: {exc}")
                 print(f"[INFO] saved_dir={output_dir}")
-                print(json.dumps(submit_payload, ensure_ascii=False, indent=2))
+                print(_format_json_for_display(submit_payload))
                 return 1
             output_dir, downloads = _save_run_outputs(
                 output_root=str(effective_output_dir),
@@ -2113,7 +2145,7 @@ def main() -> int:
                 effective_output_dir=str(output_dir),
             )
             print(f"[INFO] saved_dir={output_dir}")
-            print(json.dumps(final_payload, ensure_ascii=False, indent=2))
+            print(_format_json_for_display(final_payload))
             return 0
 
         if args.command == "animate-poll":
@@ -2148,7 +2180,7 @@ def main() -> int:
             )
             if downloads:
                 print(f"[INFO] saved_dir={effective_poll_output_dir}")
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            print(_format_json_for_display(payload))
             return 0
 
         print(f"[ERROR] unknown command: {args.command}", file=sys.stderr)

@@ -71,6 +71,13 @@ description: Create, edit, and pipeline game art assets with MeowArt for sprites
 - [`meowart_api.md`](./meowart_api.md)：面向日常使用的快速说明，重点整理了最常用的命令入口、鉴权方式和典型调用示例。适合在已经明确需求后，直接查“该用哪个命令、参数怎么写”。
 - [`meowart_api.py`](./meowart_api.py)：实际调用 MeowArt API 的脚本封装，包含各个子命令的参数定义、请求发送、轮询、下载和输出目录处理逻辑。遇到需要更细粒度控制参数、确认底层行为，或者扩展新调用方式时，应直接阅读这个脚本。
 
+## 输出目录规则
+
+- 用户要求一批资产或统一位置时，先创建本次任务专用资产根目录，例如 `./.meowart-test/<task_slug>/` 或项目约定的 `assets/generated/<task_slug>/`；之后所有生成、后处理、动画命令都显式传这个根目录下的子目录作为 `--output-dir`。
+- `--work-dir` 是命令日志/元数据目录；`--output-dir` 才是图片、动画、sprite 等资产目录。只有 `meta.json` 的目录通常不是最终资产目录。
+- `credits-balance`、`pixel-gen-template-info` 这类查询命令通常只生成 JSON；`gemini-generate-content` 和各类 `*-run` 命令才会下载资源文件。
+- 任务完成后，用图片尺寸/帧数做一次快速校验，确认关键文件实际落在用户指定的统一目录下。
+
 ## 实战指南
 - 多做对齐：每次生图图片之前，尽量先确认好需求。生成之后也让用户确认一下品质（或者你自己确认），最好不要一上来就大规模生成，而是先选一两个模板，
 - 文档编写：随着开发，交流，生成的过程，最好持续的更新文档，例如写到项目根目录下的 `AGENTS.md`里，在里面开一个章节，记录美术相关的只是，例如美术风格，资产要求（如画布尺寸，sprite 尺寸等），资产分布，生成过程的记录等。这可以让提高整体美术开发的效率和一致性。
@@ -78,6 +85,14 @@ description: Create, edit, and pipeline game art assets with MeowArt for sprites
 ### 场景生成
 - 游戏背景图或者场景图，通常优先使用通用的 `gemini-generate-content`。
 - 固定尺寸背景图：直接走通用生成模式，在描述里明确风格、主体和镜头关系。例如“像素风格的夜空和烟花”。这里最重要的是先选一个接近最终画布的尺寸比例，例如 `16:9`，这样后续通常只需要轻微 crop，不必再做大幅缩放。
+- 如果用户明确要 `2K`、`16:9` 等尺寸，不要只在 prompt 里写尺寸；同时传 `generationConfig.imageConfig`，例如：
+  ```bash
+  python3 skills/game-assets/meowart_api.py gemini-generate-content \
+    --text "Generate a 2K 16:9 game background..." \
+    --generation-config '{"responseModalities":["TEXT","IMAGE"],"imageConfig":{"aspectRatio":"16:9","imageSize":"2K"}}' \
+    --output-dir ./outputs/background_2k_16x9
+  ```
+  生成后必须检查实际尺寸；`16:9 2K` 期望是 `2752 x 1536`。
 - 无限循环背景图：先生成一张普通背景图(最好在 prompt 中提前说明这是横向游戏还是纵向游戏的背景,否则图片的横纵比或者内容太差，可能无法改造为自我循环)。然后再调用 `self-loop-run`，把它转成横向或纵向可无缝循环的背景，用于卷轴场景或重复平铺纹理。
 
 ### 角色生成
@@ -88,6 +103,7 @@ description: Create, edit, and pipeline game art assets with MeowArt for sprites
 - 对于 pixel-gen 模板，像“白色背景”“像素风格”这类模板本身已经隐含的约束，通常不需要在 `requirement` 里重复强调，除非这次任务确实要覆盖模板默认行为。
 - 如果是横版过关游戏，或者类吸血鬼幸存者游戏，优先考虑带 `direction` 的模板，用 `left` 或 `right` 这类侧面视角会更贴合游戏表现；如果还是用普通模板，也要在 prompt 里明确写清楚角色视角。
 - 当前这套模板主要面向 Pixel 风格 Sprite；如果要做高清二次元、厚涂、插画风角色，只能先用通用的 `gemini-generate-content` 生成，再自行抠图或后处理。
+- 如果用户明确“不使用 template”但要像素角色，走通用生图生成白底单角色，再按顺序执行：`pixelate-run` 收敛成像素图，`remove-background-run --method pixel` 去白底，最后校验 PNG 是 `RGBA` 且尺寸符合接入需求。默认不要手动传 `--pixel-size`，优先让服务端自动估计；只有明确目标尺寸或已验证参数时才指定，例如同一输入下 `--pixel-size 16` 可能比 `--pixel-size 8` 更接近 `128x128` sprite。
 - 人物主角、Boss、立绘感更强的角色，通常更适合选单次只生成 `1` 到 `2` 个的大尺寸模板。批量敌人、批量道具、Icon 等，则更适合一次生成 `8` 个左右的模板，提高效率并确保同批资源风格一致。
 - 不同模板生成出来的 sprite 尺寸可能不同，接入游戏代码时要注意统一 resize。像素图只能使用邻近采样，并尽量保持整数倍缩放，例如 `2x`、`3x`；不要使用 `0.85x`、`1.2x` 这类非整数缩放，否则会破坏像素质感。
 
@@ -96,6 +112,7 @@ description: Create, edit, and pipeline game art assets with MeowArt for sprites
 - 输出通常会包含 `gif`、`webp`、`png` 三种格式；其中 `png` 一般已经去掉背景，可以直接作为 sprite sheet 接入游戏。
 - 最佳顺序通常不是一开始就做动画，而是先把静态 Sprite 做出来，并在游戏里验证尺寸、透视、美术风格、碰撞盒、游戏性都没有问题后，再进入动画阶段。
 - 这样做的原因是 `animate-run` 相对更慢、费用也更高，更适合作为资产定稿前的最后一步，而不是前期反复试错的主流程。
+- 动画接口偶尔会返回临时 `502` 或轮询异常：如果提交阶段已经打印 `api_job_id`，用 `animate-poll --api-job-id <id>` 复查并下载；如果提交阶段没有拿到 job id，直接重试 `animate-run`。
 
 ### UI 生成
 - 目前工具里没有真正端到端的 UI 生成接口，但可以通过通用生图和其他 API 组合出一套可用流程。
