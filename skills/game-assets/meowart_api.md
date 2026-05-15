@@ -29,6 +29,12 @@
 Authorization: Bearer ma_live_xxxxxxxxxxxxxxxxxxxx
 ```
 
+项目调试或后端自部署环境也支持开发者鉴权：
+
+```http
+X-Dev-Key: xxxxxxxxxxxxxxxxxxxx
+```
+
 推荐先设置环境变量：
 
 ```bash
@@ -36,11 +42,20 @@ export MEOWART_API_KEY="ma_live_xxxxxxxxxxxxxxxxxxxx"
 ```
 
 `skills/meowart_api.py` 在未显式传入 `--api-key` 时，会自动读取这个环境变量。
+如果传入 `--dev-key`，或设置 `MEOWART_DEV_KEY` / `DEV_API_KEY`，脚本会改用 `X-Dev-Key` 调用后端。读取顺序优先级是：
+
+1. `--dev-key`
+2. `MEOWART_DEV_KEY` 或 `DEV_API_KEY`
+3. `.env` 里的 `MEOWART_DEV_KEY` 或 `DEV_API_KEY`
+4. `--api-key`
+5. `MEOWART_API_KEY`
+6. `.env` 里的 `MEOWART_API_KEY`
 
 也可以写入当前目录、`skills/` 目录或项目根目录的 `.env`：
 
 ```bash
 MEOWART_API_KEY="ma_live_xxxxxxxxxxxxxxxxxxxx"
+MEOWART_DEV_KEY="xxxxxxxxxxxxxxxxxxxx"
 ```
 
 推荐优先使用环境变量或 `.env`，尽量不要在每次调用 API 时都显式传入 `--api-key`，因为这样不够安全，容易出现在 shell 历史、日志或截图里。

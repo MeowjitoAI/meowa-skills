@@ -17,6 +17,7 @@ import requests
 
 DEFAULT_API_BASE = "https://api.meowart.ai"
 DEFAULT_API_KEY_ENV = "MEOWART_API_KEY"
+DEFAULT_DEV_KEY_ENV = "MEOWART_DEV_KEY"
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-image-preview"
 DEFAULT_WORK_DIR = str(Path(__file__).resolve().parent / ".meow_art")
 DEFAULT_TIMEOUT = 240
@@ -26,6 +27,7 @@ ACTIVE_JOB_STATUSES = {"queued", "pending", "running"}
 TERMINAL_JOB_STATUSES = {"success", "failure", "cancelled"}
 TERMINAL_ANIMATE_STATUSES = {"success", "completed", "failure", "failed", "cancelled", "canceled"}
 SUCCESS_ANIMATE_STATUSES = {"success", "completed"}
+LONG_INLINE_DATA_DISPLAY_LIMIT = 240
 
 
 def _configure_stdio() -> None:
@@ -108,8 +110,10 @@ def _sanitize_for_meta(value: Any, *, key: str = "") -> Any:
         return [_sanitize_for_meta(item, key=key) for item in value]
     if isinstance(value, Path):
         return str(value)
-    if any(token in lowered_key for token in {"api_key", "token", "authorization", "secret"}):
+    if any(token in lowered_key for token in {"api_key", "dev_key", "token", "authorization", "secret"}):
         return _mask_secret(str(value))
+    if lowered_key == "data" and isinstance(value, str) and len(value) > LONG_INLINE_DATA_DISPLAY_LIMIT:
+        return f"***TRUNCATED_INLINE_DATA:{len(value)} chars***"
     return value
 
 
@@ -193,7 +197,11 @@ def _safe_slug(value: str) -> str:
 
 
 def _base_headers(api_key: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {api_key}"}
+    token = str(api_key or "").strip()
+    dev_prefix = "x-dev-key:"
+    if token.startswith(dev_prefix):
+        return {"X-Dev-Key": token[len(dev_prefix):].strip()}
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _should_send_auth_headers(url: str) -> bool:
@@ -1219,6 +1227,14 @@ def parse_args() -> argparse.Namespace:
         default="",
         help=f"User API key, e.g. ma_live_xxx. Defaults to ${DEFAULT_API_KEY_ENV} or .env when omitted.",
     )
+    parser.add_argument(
+        "--dev-key",
+        default="",
+        help=(
+            f"Developer auth key sent as X-Dev-Key. Defaults to ${DEFAULT_DEV_KEY_ENV}, "
+            "then DEV_API_KEY, or matching .env values when omitted."
+        ),
+    )
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help="Per-request timeout in seconds")
     parser.add_argument("--max-wait", type=int, default=DEFAULT_MAX_WAIT, help="Max polling wait in seconds")
     parser.add_argument("--poll-interval", type=float, default=DEFAULT_POLL_INTERVAL, help="Polling interval in seconds")
@@ -1262,6 +1278,15 @@ def parse_args() -> argparse.Namespace:
             "--api-key",
             default=argparse.SUPPRESS,
             help=f"User API key, e.g. ma_live_xxx. Defaults to ${DEFAULT_API_KEY_ENV} or .env when omitted.",
+        )
+        add_if_missing(
+            command_parser,
+            "--dev-key",
+            default=argparse.SUPPRESS,
+            help=(
+                f"Developer auth key sent as X-Dev-Key. Defaults to ${DEFAULT_DEV_KEY_ENV}, "
+                "then DEV_API_KEY, or matching .env values when omitted."
+            ),
         )
         add_if_missing(command_parser, "--timeout", type=int, default=argparse.SUPPRESS, help="Per-request timeout in seconds")
         add_if_missing(command_parser, "--max-wait", type=int, default=argparse.SUPPRESS, help="Max polling wait in seconds")
@@ -1442,7 +1467,19 @@ def _read_dotenv_value(key: str) -> str:
     return ""
 
 
-def _resolve_api_key(raw_api_key: str) -> str:
+def _resolve_auth_token(raw_api_key: str, raw_dev_key: str = "") -> str:
+    dev_key = (raw_dev_key or "").strip()
+    if dev_key:
+        return f"x-dev-key:{dev_key}"
+
+    env_dev_key = os.getenv(DEFAULT_DEV_KEY_ENV, "").strip() or os.getenv("DEV_API_KEY", "").strip()
+    if env_dev_key:
+        return f"x-dev-key:{env_dev_key}"
+
+    dotenv_dev_key = _read_dotenv_value(DEFAULT_DEV_KEY_ENV).strip() or _read_dotenv_value("DEV_API_KEY").strip()
+    if dotenv_dev_key:
+        return f"x-dev-key:{dotenv_dev_key}"
+
     api_key = (raw_api_key or "").strip()
     if api_key:
         return api_key
@@ -1456,8 +1493,8 @@ def _resolve_api_key(raw_api_key: str) -> str:
         return dotenv_api_key
 
     raise ValueError(
-        f"missing API key: pass --api-key, set the {DEFAULT_API_KEY_ENV} environment variable, "
-        f"or add {DEFAULT_API_KEY_ENV}=... to .env"
+        f"missing auth key: pass --api-key/--dev-key, set {DEFAULT_API_KEY_ENV}/{DEFAULT_DEV_KEY_ENV}, "
+        f"or add {DEFAULT_API_KEY_ENV}=... or {DEFAULT_DEV_KEY_ENV}=... to .env"
     )
 
 def main() -> int:
@@ -1468,7 +1505,11 @@ def main() -> int:
     effective_output_dir = _resolve_output_dir(args.output_dir, run_dir)
     try:
         needs_api_key = not (args.command == "pixel-gen-run" and getattr(args, "dry_run", False))
-        args.api_key = _resolve_api_key(args.api_key) if needs_api_key else str(args.api_key or "").strip()
+        args.api_key = (
+            _resolve_auth_token(args.api_key, getattr(args, "dev_key", ""))
+            if needs_api_key
+            else str(args.api_key or "").strip()
+        )
         verify = not args.insecure
 
         if args.command == "pixel-gen-template-info":
