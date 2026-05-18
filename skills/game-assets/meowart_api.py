@@ -63,7 +63,7 @@ def _request_json(
     verify: bool,
     params: dict[str, Any] | None = None,
     data: dict[str, Any] | None = None,
-    files: dict[str, tuple[str, bytes, str]] | None = None,
+    files: dict[str, tuple[str, bytes, str]] | list[tuple[str, tuple[str, bytes, str]]] | None = None,
     json_body: dict[str, Any] | None = None,
 ) -> tuple[requests.Response, dict[str, Any]]:
     response = requests.request(
@@ -399,7 +399,7 @@ def _looks_like_downloadable_output_url(key: str, url: str) -> bool:
     lowered_key = key.lower()
     if any(token in lowered_key for token in {"base_url", "run_dir", "debug", "manifest", "metadata"}):
         return False
-    return any(token in lowered_key for token in {"output", "result", "image", "file", "sprite", "url"})
+    return any(token in lowered_key for token in {"output", "result", "image", "file", "sprite", "audio", "music", "url"})
 
 
 def image_file_to_data_url(image_path: str) -> str:
@@ -1120,6 +1120,135 @@ def run_pixel_gen_self_loop(
     return submit_payload, final_payload
 
 
+def submit_music_generator(
+    *,
+    api_base: str,
+    api_key: str,
+    prompt: str = "",
+    audio_generate: bool = False,
+    demo: bool = False,
+    reference_images: list[str] | None = None,
+    project_id: str | None = None,
+    thread_id: str | None = None,
+    timeout: int = DEFAULT_TIMEOUT,
+    verify: bool = True,
+) -> dict[str, Any]:
+    data: dict[str, str] = {
+        "prompt": prompt,
+        "audio_generate": "true" if audio_generate else "false",
+        "demo": "true" if demo else "false",
+    }
+    if project_id is not None:
+        data["project_id"] = project_id
+    if thread_id is not None:
+        data["thread_id"] = thread_id
+
+    files: list[tuple[str, tuple[str, bytes, str]]] = []
+    for raw_path in reference_images or []:
+        path = Path(raw_path).expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"reference image not found: {path}")
+        files.append(("reference_images", (path.name, path.read_bytes(), _mime_for_path(path))))
+
+    url = _normalize_base_url(api_base, "/api/workflows/music_generator/run")
+    response, payload = _request_json(
+        method="POST",
+        url=url,
+        headers=_base_headers(api_key),
+        data=data,
+        files=files or None,
+        timeout=timeout,
+        verify=verify,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(_format_json_for_display(payload))
+    return payload
+
+
+def poll_job(
+    *,
+    api_base: str,
+    api_key: str,
+    api_job_id: str,
+    timeout: int = DEFAULT_TIMEOUT,
+    verify: bool = True,
+) -> dict[str, Any]:
+    url = _normalize_base_url(api_base, f"/api/jobs/{api_job_id}")
+    response, payload = _request_json(
+        method="GET",
+        url=url,
+        headers=_base_headers(api_key),
+        timeout=timeout,
+        verify=verify,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(_format_json_for_display(payload))
+    return payload
+
+
+def run_music_generator(
+    *,
+    api_base: str,
+    api_key: str,
+    prompt: str = "",
+    audio_generate: bool = False,
+    demo: bool = False,
+    reference_images: list[str] | None = None,
+    project_id: str | None = None,
+    thread_id: str | None = None,
+    timeout: int = DEFAULT_TIMEOUT,
+    max_wait: int = DEFAULT_MAX_WAIT,
+    poll_interval: float = DEFAULT_POLL_INTERVAL,
+    verify: bool = True,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    submit_payload = submit_music_generator(
+        api_base=api_base,
+        api_key=api_key,
+        prompt=prompt,
+        audio_generate=audio_generate,
+        demo=demo,
+        reference_images=reference_images,
+        project_id=project_id,
+        thread_id=thread_id,
+        timeout=timeout,
+        verify=verify,
+    )
+    jobs_url = str(submit_payload.get("jobs_url") or "").strip()
+    if jobs_url:
+        final_payload = poll_job_until_done(
+            jobs_url=jobs_url,
+            api_key=api_key,
+            timeout=timeout,
+            max_wait=max_wait,
+            poll_interval=poll_interval,
+            verify=verify,
+        )
+        return submit_payload, final_payload
+
+    api_job_id = str(submit_payload.get("job_id") or submit_payload.get("api_job_id") or "").strip()
+    if not api_job_id:
+        raise RuntimeError("music submit response missing job_id")
+    deadline = time.time() + max(max_wait, 1)
+    final_payload: dict[str, Any] | None = None
+    while time.time() <= deadline:
+        payload = poll_job(
+            api_base=api_base,
+            api_key=api_key,
+            api_job_id=api_job_id,
+            timeout=timeout,
+            verify=verify,
+        )
+        _print_status("[INFO]", payload)
+        status = str(payload.get("status") or "").strip().lower()
+        if status in TERMINAL_JOB_STATUSES:
+            final_payload = payload
+            break
+        time.sleep(max(poll_interval, 0.1))
+    if final_payload is None:
+        raise TimeoutError(f"music polling timed out after {max_wait}s")
+    return submit_payload, final_payload
+
+
 def poll_animate_job(
     *,
     api_base: str,
@@ -1394,6 +1523,25 @@ def parse_args() -> argparse.Namespace:
         if action.dest not in {"help", "requirement"}:
             self_loop_run._add_action(action)
     add_shared_runtime_args(self_loop_run)
+
+    music_submit = subparsers.add_parser("music-submit", help="Submit a music_generator job")
+    add_shared_path_args(music_submit)
+    music_submit.add_argument("--prompt", default="", help="Music requirement text; optional when reference images are provided")
+    music_submit.add_argument("--audio-generate", action="store_true", help="Generate audio instead of prompt-only metadata")
+    music_submit.add_argument("--demo", action="store_true", help="Use the lower-cost demo audio model when --audio-generate is set")
+    music_submit.add_argument("--reference-image", action="append", default=[], help="Optional reference image; can be repeated")
+    music_submit.add_argument("--project-id", default=None)
+    music_submit.add_argument("--thread-id", default=None)
+
+    music_run = subparsers.add_parser("music-run", help="Submit and wait for music_generator")
+    for action in music_submit._actions[1:]:
+        if action.dest not in {"help"}:
+            music_run._add_action(action)
+    add_shared_runtime_args(music_run)
+
+    music_poll = subparsers.add_parser("music-poll", help="Poll one music/workflow job")
+    add_shared_path_args(music_poll)
+    music_poll.add_argument("--api-job-id", "--job-id", dest="api_job_id", required=True)
 
     gemini_post = subparsers.add_parser("gemini-post", help="Call a generic Gemini proxy POST endpoint")
     add_shared_path_args(gemini_post)
@@ -1936,6 +2084,125 @@ def main() -> int:
             )
             print(f"[INFO] saved_dir={output_dir}")
             print(_format_json_for_display(final_payload))
+            return 0
+
+        if args.command == "music-submit":
+            request_payload = {
+                "prompt": args.prompt,
+                "audio_generate": args.audio_generate,
+                "demo": args.demo,
+                "reference_images": list(args.reference_image or []),
+                "project_id": args.project_id,
+                "thread_id": args.thread_id,
+            }
+            payload = submit_music_generator(
+                api_base=args.api_base,
+                api_key=args.api_key,
+                prompt=args.prompt,
+                audio_generate=args.audio_generate,
+                demo=args.demo,
+                reference_images=list(args.reference_image or []),
+                project_id=args.project_id,
+                thread_id=args.thread_id,
+                timeout=args.timeout,
+                verify=verify,
+            )
+            _write_meta(
+                run_dir=run_dir,
+                started_at=started_at,
+                finished_at=datetime.now().isoformat(timespec="seconds"),
+                args=args,
+                request_payload=request_payload,
+                response_payload=payload,
+                downloads=[],
+                effective_output_dir=str(effective_output_dir),
+            )
+            print(_format_json_for_display(payload))
+            return 0
+
+        if args.command == "music-run":
+            slug_seed = args.prompt or (Path(args.reference_image[0]).stem if args.reference_image else "music")
+            print(f"[INFO] planned_output_dir={_predict_saved_dir(effective_output_dir, slug_seed)}")
+            request_payload = {
+                "prompt": args.prompt,
+                "audio_generate": args.audio_generate,
+                "demo": args.demo,
+                "reference_images": list(args.reference_image or []),
+                "project_id": args.project_id,
+                "thread_id": args.thread_id,
+            }
+            submit_payload, final_payload = run_music_generator(
+                api_base=args.api_base,
+                api_key=args.api_key,
+                prompt=args.prompt,
+                audio_generate=args.audio_generate,
+                demo=args.demo,
+                reference_images=list(args.reference_image or []),
+                project_id=args.project_id,
+                thread_id=args.thread_id,
+                timeout=args.timeout,
+                max_wait=args.max_wait,
+                poll_interval=args.poll_interval,
+                verify=verify,
+            )
+            output_dir, downloads = _save_run_outputs(
+                output_root=str(effective_output_dir),
+                slug_seed=slug_seed,
+                submit_payload=submit_payload,
+                final_payload=final_payload,
+                timeout=args.timeout,
+                verify=verify,
+                api_key=args.api_key,
+                no_download=args.no_download,
+            )
+            _write_meta(
+                run_dir=run_dir,
+                started_at=started_at,
+                finished_at=datetime.now().isoformat(timespec="seconds"),
+                args=args,
+                request_payload=request_payload,
+                response_payload={"submit": submit_payload, "final": final_payload},
+                downloads=downloads,
+                effective_output_dir=str(output_dir),
+            )
+            print(f"[INFO] saved_dir={output_dir}")
+            print(_format_json_for_display(final_payload))
+            return 0
+
+        if args.command == "music-poll":
+            payload = poll_job(
+                api_base=args.api_base,
+                api_key=args.api_key,
+                api_job_id=args.api_job_id,
+                timeout=args.timeout,
+                verify=verify,
+            )
+            downloads: list[dict[str, Any]] = []
+            effective_poll_output_dir = Path(str(effective_output_dir)).expanduser()
+            if str(payload.get("status") or "").strip().lower() in TERMINAL_JOB_STATUSES:
+                effective_poll_output_dir, downloads = _save_run_outputs(
+                    output_root=str(effective_output_dir),
+                    slug_seed=args.api_job_id,
+                    submit_payload={"api_job_id": args.api_job_id},
+                    final_payload=payload,
+                    timeout=args.timeout,
+                    verify=verify,
+                    api_key=args.api_key,
+                    no_download=args.no_download,
+                )
+            _write_meta(
+                run_dir=run_dir,
+                started_at=started_at,
+                finished_at=datetime.now().isoformat(timespec="seconds"),
+                args=args,
+                request_payload={"api_job_id": args.api_job_id},
+                response_payload=payload,
+                downloads=downloads,
+                effective_output_dir=str(effective_poll_output_dir),
+            )
+            if downloads:
+                print(f"[INFO] saved_dir={effective_poll_output_dir}")
+            print(_format_json_for_display(payload))
             return 0
 
         if args.command == "gemini-post":

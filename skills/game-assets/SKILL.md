@@ -1,6 +1,6 @@
 ---
 name: game-assets
-description: Create, edit, and pipeline game art assets with MeowArt for sprites, backgrounds, UI mockups, seamless loops, background removal, pixel cleanup, and simple animation. Use when Codex needs to produce or refine game art in this project, especially when choosing MeowArt commands, sizing canvases, selecting pixel templates, or turning generated images into game-ready assets.
+description: Create, edit, and pipeline game assets with MeowArt for sprites, backgrounds, UI mockups, seamless loops, background removal, pixel cleanup, simple animation, and music/BGM generation. Use when Codex needs to produce or refine game art or audio in this project, especially when choosing MeowArt commands, sizing canvases, selecting pixel templates, generating music prompts/audio, or turning generated assets into game-ready files.
 ---
 
 # Meowart Game Asset
@@ -10,6 +10,7 @@ description: Create, edit, and pipeline game art assets with MeowArt for sprites
 - 需要先判断用哪个命令、参数怎么写、输出会落到哪里时，先读 [`meowart_api.md`](./meowart_api.md)。
 - 需要确认精确 CLI 参数、请求结构、轮询逻辑、下载逻辑，或者准备扩展脚本时，直接读 [`meowart_api.py`](./meowart_api.py)。
 - 需要快速执行资产生成任务时，先看下面的“核心规则”，再按后文的“实战指南”选择具体工作流。
+- 需要游戏 BGM、主题曲、场景音乐、音效氛围草案时，优先看“音乐生成”，通常从 `music-run` 的 prompt-only 模式开始。
 
 
 ## AI生图基础
@@ -76,6 +77,7 @@ description: Create, edit, and pipeline game art assets with MeowArt for sprites
 - 用户要求一批资产或统一位置时，先创建本次任务专用资产根目录，例如 `./.meowart-test/<task_slug>/` 或项目约定的 `assets/generated/<task_slug>/`；之后所有生成、后处理、动画命令都显式传这个根目录下的子目录作为 `--output-dir`。
 - `--work-dir` 是命令日志/元数据目录；`--output-dir` 才是图片、动画、sprite 等资产目录。只有 `meta.json` 的目录通常不是最终资产目录。
 - `credits-balance`、`pixel-gen-template-info` 这类查询命令通常只生成 JSON；`gemini-generate-content` 和各类 `*-run` 命令才会下载资源文件。
+- `music-run` 的 prompt-only 模式通常只保存 `submit_response.json` 和 `job_response.json`；只有传 `--audio-generate` 并成功生成音频时，才会下载 `mp3` 等音频文件。
 - 任务完成后，用图片尺寸/帧数做一次快速校验，确认关键文件实际落在用户指定的统一目录下。
 
 ## 实战指南
@@ -118,6 +120,14 @@ description: Create, edit, and pipeline game art assets with MeowArt for sprites
 - 最佳顺序通常不是一开始就做动画，而是先把静态 Sprite 做出来，并在游戏里验证尺寸、透视、美术风格、碰撞盒、游戏性都没有问题后，再进入动画阶段。
 - 这样做的原因是 `animate-run` 相对更慢、费用也更高，更适合作为资产定稿前的最后一步，而不是前期反复试错的主流程。
 - 动画接口偶尔会返回临时 `502` 或轮询异常：如果提交阶段已经打印 `api_job_id`，用 `animate-poll --api-job-id <id>` 复查并下载；如果提交阶段没有拿到 job id，直接重试 `animate-run`。
+
+### 音乐生成
+- 游戏 BGM、场景音乐、主题曲方向探索，通常使用 `music-run`。默认不生成音频，只生成结构化英文音乐描述，包括 `name`、`summary` 和 `timestamps_detail`，适合先让用户确认音乐方向。
+- 需要快速试听时，使用 `music-run --audio-generate --demo`，会调用 30 秒 demo 音频生成并下载返回的音频文件。正式 3 分钟音乐再使用 `--audio-generate` 且不传 `--demo`，避免前期反复试错成本过高。
+- `--prompt` 可以写中文或英文；如果有游戏截图、场景图或参考图，可以重复传 `--reference-image ./scene.png`，让音乐 prompt runner 结合画面氛围生成描述。如果只传参考图不写 prompt，服务端会按参考图生成音乐方向。
+- 默认音乐目标是 loop-friendly，适合 BGM 接入。Prompt 中仍应明确使用场景、情绪、节奏、乐器、人声限制等，例如“村庄白天市场、温暖、长笛和 kalimba、无 vocals、可循环”。
+- 输出结果里重点看 `result.name`、`result.summary`、`result.timestamps_detail`。音频模式还要检查 `result.audio_path`、`metadata.model`、`metadata.audio_bytes` 和本地下载的 `mp3` 文件大小。
+- 已有任务 id 时，用 `music-poll --api-job-id workflow-music_generator-...` 复查并下载音频。生成失败或超时时，先看 `job_response.json` 和 `meta.json`，不要盲目重复提交正式音频任务。
 
 ### UI 生成
 - 目前工具里没有真正端到端的 UI 生成接口，但可以通过通用生图和其他 API 组合出一套可用流程。

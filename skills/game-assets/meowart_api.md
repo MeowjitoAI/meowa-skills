@@ -18,6 +18,7 @@
   - 普通图片使用 `hd`，支持任意背景色
 - `pixelate-run`：把较大的图片重新收敛成更干净的像素风输出，适合在 AI 先生成大图后，将其变为完美像素的 Spite。
 - `animate-run`：基于单张角色图生成动作动画，适合做角色待机、跑步、跳跃、弹跳这类短循环动画。
+- `music-run`：生成结构化音乐描述，可选继续生成音乐音频；适合游戏 BGM、主题曲、场景音乐方向测试。
 
 ## 1. 鉴权
 
@@ -267,7 +268,50 @@ python3 skills/meowart_api.py \
 
 `animate-run` 会自动提交、轮询并下载生成结果。如果已经有任务 id，也可以用 `animate-poll --api-job-id <id>` 继续等待和下载。
 
-## 10. 输出目录
+## 10. Music Generator
+
+只生成结构化音乐 prompt，不生成音频：
+
+```bash
+python3 skills/meowart_api.py \
+  music-run \
+  --prompt "A cozy pixel RPG village theme with flute, kalimba, soft strings, loop-friendly"
+```
+
+生成 30 秒 demo 音频：
+
+```bash
+python3 skills/meowart_api.py \
+  music-run \
+  --prompt "A cozy pixel RPG village theme with flute, kalimba, soft strings, loop-friendly" \
+  --audio-generate \
+  --demo
+```
+
+可选传参考图，参数可以重复：
+
+```bash
+python3 skills/meowart_api.py \
+  music-run \
+  --prompt "Music inspired by this scene" \
+  --reference-image ./scene.png
+```
+
+常用参数：
+
+- `--prompt`：音乐需求；如果传了参考图，可以为空。
+- `--reference-image`：参考图片，可重复。
+- `--audio-generate`：实际生成音乐音频；不传时只生成音乐描述。
+- `--demo`：配合 `--audio-generate` 使用，生成低成本 30 秒试听。
+- `--max-wait` / `--poll-interval`：控制轮询等待。
+
+`music-run` 会保存提交响应、最终 job 响应，并在音频生成成功时下载返回里的音频文件。已经有 job id 时可以用：
+
+```bash
+python3 skills/meowart_api.py music-poll --api-job-id workflow-music_generator-xxxx
+```
+
+## 11. 输出目录
 
 这些 `*-run` 命令默认会在脚本目录下创建：
 
