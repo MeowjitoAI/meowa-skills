@@ -22,13 +22,15 @@
 
 ## 1. 鉴权
 
-在使用 MeowArt API 前，先登录 [https://meowart.ai/#/api-keys](https://meowart.ai/#/api-keys)，然后点击左侧的 `Create API Key` 按钮，创建一个 token。
+在使用 MeowArt API 前，先登录 [https://meowa.ai/#/api-keys](https://meowa.ai/#/api-keys)，然后点击左侧的 `Create API Key` 按钮，创建一个 token。
 
 默认使用真实用户 API key：
 
 ```http
 Authorization: Bearer ma_live_xxxxxxxxxxxxxxxxxxxx
 ```
+
+环境变量里只放 `ma_live_...` 本身，不要把 `authenticate:` 这类标签一起复制进去。
 
 项目调试或后端自部署环境也支持开发者鉴权：
 
@@ -64,7 +66,7 @@ MEOWART_DEV_KEY="xxxxxxxxxxxxxxxxxxxx"
 如果运行时找不到 `MEOWART_API_KEY`，应先提醒用户配置 key；需要时也可以直接帮用户打开 API key 页面：
 
 ```bash
-open "https://meowart.ai/#/api-keys"
+open "https://meowa.ai/#/api-keys"
 ```
 
 这样用户可以立刻前往创建或查看自己的 API key。

@@ -56,7 +56,7 @@ python3 skills/game-assets/meowart_api.py --help
 
 Create an API key in Meowa:
 
-https://meowart.ai/#/api-keys
+https://meowa.ai/#/api-keys
 
 Then set it as an environment variable:
 

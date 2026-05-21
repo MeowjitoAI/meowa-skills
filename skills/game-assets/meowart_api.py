@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 import requests
 
-DEFAULT_API_BASE = "https://api.meowart.ai"
+DEFAULT_API_BASE = "https://api.meowa.ai"
 DEFAULT_API_KEY_ENV = "MEOWART_API_KEY"
 DEFAULT_DEV_KEY_ENV = "MEOWART_DEV_KEY"
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-image-preview"
@@ -28,6 +28,7 @@ TERMINAL_JOB_STATUSES = {"success", "failure", "cancelled"}
 TERMINAL_ANIMATE_STATUSES = {"success", "completed", "failure", "failed", "cancelled", "canceled"}
 SUCCESS_ANIMATE_STATUSES = {"success", "completed"}
 LONG_INLINE_DATA_DISPLAY_LIMIT = 240
+AUTH_HEADER_HOST_SUFFIXES = ("meowa.ai", "generativelanguage.googleapis.com")
 
 
 def _configure_stdio() -> None:
@@ -201,7 +202,16 @@ def _base_headers(api_key: str) -> dict[str, str]:
     dev_prefix = "x-dev-key:"
     if token.startswith(dev_prefix):
         return {"X-Dev-Key": token[len(dev_prefix):].strip()}
+    auth_prefix = "authenticate:"
+    if token.lower().startswith(auth_prefix):
+        candidate = token[len(auth_prefix):].strip()
+        if candidate.startswith("ma_live_"):
+            token = candidate
     return {"Authorization": f"Bearer {token}"}
+
+
+def _host_matches_suffix(host: str, suffix: str) -> bool:
+    return host == suffix or host.endswith(f".{suffix}")
 
 
 def _should_send_auth_headers(url: str) -> bool:
@@ -210,7 +220,7 @@ def _should_send_auth_headers(url: str) -> bool:
         return False
     if host.endswith("storage.googleapis.com"):
         return False
-    return host.endswith("meowart.ai") or host.endswith("generativelanguage.googleapis.com")
+    return any(_host_matches_suffix(host, suffix) for suffix in AUTH_HEADER_HOST_SUFFIXES)
 
 
 def _normalize_base_url(api_base: str, endpoint: str) -> str:
